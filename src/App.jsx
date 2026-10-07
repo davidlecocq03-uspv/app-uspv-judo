@@ -1,6 +1,21 @@
 import React, { useState, useEffect } from 'react';
+import { initializeApp } from "firebase/app";
+import { getFirestore, collection, onSnapshot, doc, setDoc, deleteDoc } from "firebase/firestore";
 
-// Horaires du club
+const firebaseConfig = {
+  apiKey: "AIzaSyD8nGONfOywjTAFozOLdiaK48uN0AUygkk",
+  authDomain: "uspv-judo.firebaseapp.com",
+  projectId: "uspv-judo",
+  storageBucket: "uspv-judo.firebasestorage.app",
+  messagingSenderId: "153451349087",
+  appId: "1:153451349087:web:7a1d1fbd789d9c020907ea",
+  measurementId: "G-JPNR2K3C75"
+};
+
+// Initialisation de Firebase
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
+
 const WEEKLY_SCHEDULE = [
   { id: 'mer-enf', day: 'Mercredi', time: '16:45 - 18:00', level: 'Cours Enfants', location: 'Dojo Principal' },
   { id: 'mer-ado', day: 'Mercredi', time: '18:00 - 19:30', level: 'Cours Ado-Adultes', location: 'Dojo Principal' },
@@ -44,26 +59,34 @@ export default function App() {
   const [isLoading, setIsLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('planning');
 
+  // Chargement du profil local
   useEffect(() => {
-    const loadData = () => {
-      try {
-        const storedProfile = localStorage.getItem('uspv_profile');
-        if (storedProfile) {
-          const parsedProfile = JSON.parse(storedProfile);
-          setProfile(parsedProfile);
-          setUser({ uid: parsedProfile.uid });
-        }
-        const storedAttendances = localStorage.getItem('uspv_attendances');
-        if (storedAttendances) {
-          setAttendances(JSON.parse(storedAttendances));
-        }
-      } catch (err) {
-        console.error(err);
-      } finally {
-        setIsLoading(false);
+    try {
+      const storedProfile = localStorage.getItem('uspv_profile');
+      if (storedProfile) {
+        const parsedProfile = JSON.parse(storedProfile);
+        setProfile(parsedProfile);
+        setUser({ uid: parsedProfile.uid });
       }
-    };
-    setTimeout(loadData, 500);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    // Écoute de la base de données en temps réel
+    const unsubscribe = onSnapshot(collection(db, "attendances"), (snapshot) => {
+      const attendancesData = [];
+      snapshot.forEach((doc) => {
+        attendancesData.push(doc.data());
+      });
+      setAttendances(attendancesData);
+    });
+
+    // Nettoyage lors de la fermeture
+    return () => unsubscribe();
   }, []);
 
   useEffect(() => {
@@ -97,24 +120,32 @@ export default function App() {
     }
   };
 
-  const toggleAttendance = (sessionId, status) => {
+  const toggleAttendance = async (sessionId, status) => {
     if (!user || !profile || !profile.name) return;
-    let updatedAttendances = [...attendances];
-    updatedAttendances = updatedAttendances.filter(
-      a => !(a.sessionId === sessionId && a.teacherId === user.uid)
-    );
-    if (status !== 'none') {
-      updatedAttendances.push({
-        id: `${sessionId}_${user.uid}`,
-        sessionId,
-        teacherId: user.uid,
-        teacherName: profile.name,
-        status,
-        updatedAt: Date.now()
-      });
+    
+    // Identifiant unique pour ce prof sur ce cours
+    const docId = `${sessionId}_${user.uid}`;
+    const docRef = doc(db, "attendances", docId);
+
+    try {
+      if (status === 'none') {
+        // Suppression de la présence
+        await deleteDoc(docRef);
+      } else {
+        // Ajout ou modification de la présence
+        await setDoc(docRef, {
+          id: docId,
+          sessionId,
+          teacherId: user.uid,
+          teacherName: profile.name,
+          status,
+          updatedAt: Date.now()
+        });
+      }
+    } catch (error) {
+      console.error("Erreur lors de l'enregistrement :", error);
+      alert("Une erreur est survenue lors de l'enregistrement de votre présence.");
     }
-    setAttendances(updatedAttendances);
-    localStorage.setItem('uspv_attendances', JSON.stringify(updatedAttendances));
   };
 
   const handleLogout = () => {
@@ -192,7 +223,10 @@ export default function App() {
           </div>
           <div>
             <h1 className="font-extrabold text-gray-900 leading-tight">Judo</h1>
-            <p className="text-xs text-blue-600 font-semibold">Espace Professeurs</p>
+            <p className="text-xs text-blue-600 font-semibold flex items-center gap-1">
+              <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
+              En direct
+            </p>
           </div>
         </div>
         <div className="w-8 h-8 bg-blue-50 text-blue-700 rounded-full flex items-center justify-center font-bold text-sm">
@@ -204,8 +238,8 @@ export default function App() {
         {activeTab === 'planning' && (
           <div className="p-4 flex flex-col gap-6">
             <div className="bg-blue-50 border border-blue-100 rounded-lg p-4 text-sm text-blue-800 flex gap-3 shadow-sm">
-              <span className="text-xl">⚠️</span>
-              <p>Indiquez votre présence sur les créneaux pour informer l'équipe.</p>
+              <span className="text-xl">ℹ️</span>
+              <p>Indiquez votre présence. Vos collègues verront votre réponse instantanément.</p>
             </div>
 
             {Object.keys(groupedSchedule).map(dateLabel => {
@@ -265,7 +299,7 @@ export default function App() {
 
                           {classAtts.length > 0 && (
                             <div className="my-3 bg-gray-50 rounded-lg p-3 border border-gray-100">
-                              <p className="text-xs font-semibold text-gray-500 mb-2 uppercase tracking-wider">Présences déclarées</p>
+                              <p className="text-xs font-semibold text-gray-500 mb-2 uppercase tracking-wider">Présences en direct</p>
                               <div className="flex flex-col gap-1.5">
                                 {presentTeachers.length > 0 && (
                                   <div className="flex items-start gap-2 text-sm">
