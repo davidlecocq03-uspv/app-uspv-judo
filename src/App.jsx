@@ -6,7 +6,7 @@ import {
   MapPin, Clock, ShieldAlert, Activity
 } from 'lucide-react';
 
-// Configuration Firebase
+// --- CONFIGURATION FIREBASE ---
 const firebaseConfig = {
   apiKey: "AIzaSyD8nGONfOywjTAFozOLdiaK48uN0AUygkk",
   authDomain: "uspv-judo.firebaseapp.com",
@@ -20,7 +20,7 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 
-// Dates des vacances scolaires (Zone A)
+// --- DATES DES VACANCES SCOLAIRES (ZONE A) ---
 const HOLIDAYS_ZONE_A = [
   { start: '2026-10-17', end: '2026-11-02' }, // Toussaint 2026
   { start: '2026-12-19', end: '2027-01-04' }, // Noël 2026
@@ -30,36 +30,35 @@ const HOLIDAYS_ZONE_A = [
   { start: '2027-10-23', end: '2027-11-08' }  // Toussaint 2027
 ];
 
-// Vérifie si une date tombe pendant les vacances
+// Vérifie si une date précise tombe pendant les vacances
 const isHoliday = (dateObj) => {
   const localDate = new Date(dateObj.getTime() - (dateObj.getTimezoneOffset() * 60000));
   const dateString = localDate.toISOString().split('T')[0];
   return HOLIDAYS_ZONE_A.some(h => dateString >= h.start && dateString <= h.end);
 };
 
-// Moteur de calendrier intelligent
+// --- MOTEUR DE CALENDRIER INTELLIGENT ---
 const getUpcomingSchedule = () => {
   const now = new Date();
   let schedule = [];
   let addedDays = 0;
   let daysChecked = 0;
 
-  // Cherche les 2 prochains jours de cours (Mercredi et Vendredi)
+  // On cherche les 2 prochains jours de cours (Mercredi et Vendredi)
   while (addedDays < 2 && daysChecked < 14) { 
     const checkDate = new Date(now);
     checkDate.setDate(now.getDate() + daysChecked);
     const dayOfWeek = checkDate.getDay();
 
-    if (dayOfWeek === 3 || dayOfWeek === 5) {
+    if (dayOfWeek === 3 || dayOfWeek === 5) { // 3 = Mercredi, 5 = Vendredi
       const isHol = isHoliday(checkDate);
       const dayName = dayOfWeek === 3 ? 'Mercredi' : 'Vendredi';
       let dailyClasses = [];
 
       if (isHol) {
-        // --- HORAIRES VACANCES ---
-        // Seulement Ado-Adultes, à 18h00 - 19h30
+        // HORAIRES VACANCES : Uniquement Ado-Adultes de 18h à 19h30
         dailyClasses.push({ 
-          id: `${dayName.substring(0,3).toLowerCase()}-ado`, 
+          id: `${dayName.substring(0,3).toLowerCase()}-ado-vac`, 
           day: dayName, 
           time: '18:00 - 19:30', 
           level: 'Cours Ado-Adultes', 
@@ -67,7 +66,7 @@ const getUpcomingSchedule = () => {
           isHoliday: true 
         });
       } else {
-        // --- HORAIRES NORMAUX ---
+        // HORAIRES NORMAUX
         dailyClasses.push({ 
           id: `${dayName.substring(0,3).toLowerCase()}-enf`, 
           day: dayName, 
@@ -88,7 +87,7 @@ const getUpcomingSchedule = () => {
 
       let hasValidClassThisDay = false;
 
-      // Vérifie si le cours n'est pas déjà passé aujourd'hui
+      // On vérifie que le cours n'est pas déjà terminé aujourd'hui
       dailyClasses.forEach(cls => {
         const [startStr, endStr] = cls.time.split(' - ');
         const [startH, startM] = startStr.split(':').map(Number);
@@ -120,10 +119,12 @@ const getUpcomingSchedule = () => {
     daysChecked++;
   }
 
+  // Tri chronologique
   schedule.sort((a, b) => a.classDate - b.classDate);
   return schedule;
 };
 
+// --- COMPOSANT PRINCIPAL ---
 export default function App() {
   const [user, setUser] = useState(null);
   const [profile, setProfile] = useState(null);
@@ -132,6 +133,7 @@ export default function App() {
   const [isLoading, setIsLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('planning');
 
+  // Chargement du profil
   useEffect(() => {
     try {
       const storedProfile = localStorage.getItem('uspv_profile');
@@ -147,6 +149,7 @@ export default function App() {
     }
   }, []);
 
+  // Synchronisation Firebase en temps réel
   useEffect(() => {
     const unsubscribe = onSnapshot(collection(db, "attendances"), (snapshot) => {
       const attendancesData = [];
@@ -158,12 +161,13 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
+  // Mise à jour du calendrier
   useEffect(() => {
     const updateSchedule = () => {
       setDynamicSchedule(getUpcomingSchedule());
     };
     updateSchedule();
-    const intervalId = setInterval(updateSchedule, 60000);
+    const intervalId = setInterval(updateSchedule, 60000); // Actualisation toutes les minutes
     return () => clearInterval(intervalId);
   }, []);
 
@@ -201,7 +205,6 @@ export default function App() {
       }
     } catch (error) {
       console.error("Erreur d'enregistrement :", error);
-      alert("Une erreur est survenue.");
     }
   };
 
