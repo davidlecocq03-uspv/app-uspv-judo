@@ -1,7 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { initializeApp } from "firebase/app";
 import { getFirestore, collection, onSnapshot, doc, setDoc, deleteDoc } from "firebase/firestore";
+import { 
+  Calendar, CheckCircle, XCircle, User, LogOut, 
+  MapPin, Clock, ShieldAlert, Activity
+} from 'lucide-react';
 
+// Configuration Firebase
 const firebaseConfig = {
   apiKey: "AIzaSyD8nGONfOywjTAFozOLdiaK48uN0AUygkk",
   authDomain: "uspv-judo.firebaseapp.com",
@@ -12,43 +17,111 @@ const firebaseConfig = {
   measurementId: "G-JPNR2K3C75"
 };
 
-// Initialisation de Firebase
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 
-const WEEKLY_SCHEDULE = [
-  { id: 'mer-enf', day: 'Mercredi', time: '16:45 - 18:00', level: 'Cours Enfants', location: 'Dojo Principal' },
-  { id: 'mer-ado', day: 'Mercredi', time: '18:00 - 19:30', level: 'Cours Ado-Adultes', location: 'Dojo Principal' },
-  { id: 'ven-enf', day: 'Vendredi', time: '17:45 - 19:00', level: 'Cours Enfants', location: 'Dojo Principal' },
-  { id: 'ven-ado', day: 'Vendredi', time: '19:00 - 20:30', level: 'Cours Ado-Adultes', location: 'Dojo Principal' },
+// Dates des vacances scolaires (Zone A)
+const HOLIDAYS_ZONE_A = [
+  { start: '2026-10-17', end: '2026-11-02' }, // Toussaint 2026
+  { start: '2026-12-19', end: '2027-01-04' }, // Noël 2026
+  { start: '2027-02-06', end: '2027-02-22' }, // Hiver 2027
+  { start: '2027-04-03', end: '2027-04-19' }, // Printemps 2027
+  { start: '2027-07-03', end: '2027-09-01' }, // Été 2027
+  { start: '2027-10-23', end: '2027-11-08' }  // Toussaint 2027
 ];
 
-const getNextClassDate = (dayName, timeRange) => {
-  const daysMap = { 'Dimanche': 0, 'Lundi': 1, 'Mardi': 2, 'Mercredi': 3, 'Jeudi': 4, 'Vendredi': 5, 'Samedi': 6 };
-  const targetDay = daysMap[dayName];
-  const [startStr, endStr] = timeRange.split(' - ');
-  const [endHours, endMinutes] = endStr.split(':').map(Number);
+// Vérifie si une date tombe pendant les vacances
+const isHoliday = (dateObj) => {
+  const localDate = new Date(dateObj.getTime() - (dateObj.getTimezoneOffset() * 60000));
+  const dateString = localDate.toISOString().split('T')[0];
+  return HOLIDAYS_ZONE_A.some(h => dateString >= h.start && dateString <= h.end);
+};
 
+// Moteur de calendrier intelligent
+const getUpcomingSchedule = () => {
   const now = new Date();
-  const today = now.getDay();
-  
-  let daysUntil = targetDay - today;
-  
-  if (daysUntil < 0) {
-    daysUntil += 7;
-  } else if (daysUntil === 0) {
-    const endDateTime = new Date(now);
-    endDateTime.setHours(endHours, endMinutes, 0, 0);
-    if (now > endDateTime) {
-      daysUntil += 7;
+  let schedule = [];
+  let addedDays = 0;
+  let daysChecked = 0;
+
+  // Cherche les 2 prochains jours de cours (Mercredi et Vendredi)
+  while (addedDays < 2 && daysChecked < 14) { 
+    const checkDate = new Date(now);
+    checkDate.setDate(now.getDate() + daysChecked);
+    const dayOfWeek = checkDate.getDay();
+
+    if (dayOfWeek === 3 || dayOfWeek === 5) {
+      const isHol = isHoliday(checkDate);
+      const dayName = dayOfWeek === 3 ? 'Mercredi' : 'Vendredi';
+      let dailyClasses = [];
+
+      if (isHol) {
+        // --- HORAIRES VACANCES ---
+        // Seulement Ado-Adultes, à 18h00 - 19h30
+        dailyClasses.push({ 
+          id: `${dayName.substring(0,3).toLowerCase()}-ado`, 
+          day: dayName, 
+          time: '18:00 - 19:30', 
+          level: 'Cours Ado-Adultes', 
+          location: 'Dojo Principal', 
+          isHoliday: true 
+        });
+      } else {
+        // --- HORAIRES NORMAUX ---
+        dailyClasses.push({ 
+          id: `${dayName.substring(0,3).toLowerCase()}-enf`, 
+          day: dayName, 
+          time: dayName === 'Mercredi' ? '16:45 - 18:00' : '17:45 - 19:00', 
+          level: 'Cours Enfants', 
+          location: 'Dojo Principal', 
+          isHoliday: false 
+        });
+        dailyClasses.push({ 
+          id: `${dayName.substring(0,3).toLowerCase()}-ado`, 
+          day: dayName, 
+          time: dayName === 'Mercredi' ? '18:00 - 19:30' : '19:00 - 20:30', 
+          level: 'Cours Ado-Adultes', 
+          location: 'Dojo Principal', 
+          isHoliday: false 
+        });
+      }
+
+      let hasValidClassThisDay = false;
+
+      // Vérifie si le cours n'est pas déjà passé aujourd'hui
+      dailyClasses.forEach(cls => {
+        const [startStr, endStr] = cls.time.split(' - ');
+        const [startH, startM] = startStr.split(':').map(Number);
+        const [endH, endM] = endStr.split(':').map(Number);
+
+        const classStart = new Date(checkDate);
+        classStart.setHours(startH, startM, 0, 0);
+
+        const classEnd = new Date(checkDate);
+        classEnd.setHours(endH, endM, 0, 0);
+
+        if (now < classEnd) {
+          const localDate = new Date(classStart.getTime() - (classStart.getTimezoneOffset() * 60000));
+          const dateString = localDate.toISOString().split('T')[0];
+          const sessionId = `${cls.id}_${dateString}`;
+
+          schedule.push({
+             ...cls,
+             classDate: classStart,
+             dateString,
+             sessionId
+          });
+          hasValidClassThisDay = true;
+        }
+      });
+
+      if (hasValidClassThisDay) addedDays++;
     }
+    daysChecked++;
   }
 
-  const nextDate = new Date(now);
-  nextDate.setDate(now.getDate() + daysUntil);
-  const [startHours, startMinutes] = startStr.split(':').map(Number);
-  nextDate.setHours(startHours, startMinutes, 0, 0);
-  return nextDate;
+  schedule.sort((a, b) => a.classDate - b.classDate);
+  return schedule;
 };
 
 export default function App() {
@@ -59,7 +132,6 @@ export default function App() {
   const [isLoading, setIsLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('planning');
 
-  // Chargement du profil local
   useEffect(() => {
     try {
       const storedProfile = localStorage.getItem('uspv_profile');
@@ -76,7 +148,6 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    // Écoute de la base de données en temps réel
     const unsubscribe = onSnapshot(collection(db, "attendances"), (snapshot) => {
       const attendancesData = [];
       snapshot.forEach((doc) => {
@@ -84,24 +155,13 @@ export default function App() {
       });
       setAttendances(attendancesData);
     });
-
-    // Nettoyage lors de la fermeture
     return () => unsubscribe();
   }, []);
 
   useEffect(() => {
     const updateSchedule = () => {
-      const scheduleWithDates = WEEKLY_SCHEDULE.map(cls => {
-        const classDate = getNextClassDate(cls.day, cls.time);
-        const localDate = new Date(classDate.getTime() - (classDate.getTimezoneOffset() * 60000));
-        const dateString = localDate.toISOString().split('T')[0];
-        const sessionId = `${cls.id}_${dateString}`;
-        return { ...cls, classDate, dateString, sessionId };
-      });
-      scheduleWithDates.sort((a, b) => a.classDate - b.classDate);
-      setDynamicSchedule(scheduleWithDates);
+      setDynamicSchedule(getUpcomingSchedule());
     };
-
     updateSchedule();
     const intervalId = setInterval(updateSchedule, 60000);
     return () => clearInterval(intervalId);
@@ -123,16 +183,13 @@ export default function App() {
   const toggleAttendance = async (sessionId, status) => {
     if (!user || !profile || !profile.name) return;
     
-    // Identifiant unique pour ce prof sur ce cours
     const docId = `${sessionId}_${user.uid}`;
     const docRef = doc(db, "attendances", docId);
 
     try {
       if (status === 'none') {
-        // Suppression de la présence
         await deleteDoc(docRef);
       } else {
-        // Ajout ou modification de la présence
         await setDoc(docRef, {
           id: docId,
           sessionId,
@@ -143,8 +200,8 @@ export default function App() {
         });
       }
     } catch (error) {
-      console.error("Erreur lors de l'enregistrement :", error);
-      alert("Une erreur est survenue lors de l'enregistrement de votre présence.");
+      console.error("Erreur d'enregistrement :", error);
+      alert("Une erreur est survenue.");
     }
   };
 
@@ -174,7 +231,7 @@ export default function App() {
   if (isLoading) {
     return (
       <div className="min-h-screen bg-gray-50 flex flex-col justify-center items-center">
-        <div className="text-4xl animate-bounce mb-4">🥋</div>
+        <Activity className="w-8 h-8 text-blue-600 animate-spin mb-4" />
         <p className="text-gray-500 font-medium">Chargement du planning...</p>
       </div>
     );
@@ -184,8 +241,8 @@ export default function App() {
     return (
       <div className="min-h-screen bg-blue-50 flex flex-col items-center justify-center p-6">
         <div className="bg-white p-8 rounded-2xl shadow-xl w-full max-w-sm">
-          <div className="w-16 h-16 bg-blue-600 rounded-full flex items-center justify-center mx-auto mb-4 shadow-md text-white font-black text-xl">
-            USPV
+          <div className="w-16 h-16 bg-blue-600 rounded-full flex items-center justify-center mx-auto mb-4 shadow-md">
+            <span className="text-white font-black text-xl">USPV</span>
           </div>
           <h1 className="text-2xl font-bold text-center text-gray-900 mb-2">Bienvenue !</h1>
           <p className="text-center text-gray-500 mb-6 text-sm">Entrez votre prénom pour accéder au planning.</p>
@@ -199,14 +256,15 @@ export default function App() {
                 name="name" 
                 required
                 className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
-                placeholder="Ex: Frédéric, Florent..."
+                placeholder="Ex: Mehdi, Fabien..."
               />
             </div>
             <button 
               type="submit"
               className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded-xl transition-colors shadow-md flex justify-center items-center gap-2"
             >
-              <span>👤</span> Se connecter
+              <User className="w-5 h-5" />
+              Se connecter
             </button>
           </form>
         </div>
@@ -218,8 +276,8 @@ export default function App() {
     <div className="min-h-screen bg-gray-50 pb-20">
       <header className="bg-white px-4 py-3 shadow-sm flex items-center justify-between sticky top-0 z-10">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 bg-blue-600 rounded-full flex items-center justify-center shadow-inner text-white font-bold text-sm tracking-wider">
-            USPV
+          <div className="w-10 h-10 bg-blue-600 rounded-full flex items-center justify-center shadow-inner">
+            <span className="text-white font-bold text-sm tracking-wider">USPV</span>
           </div>
           <div>
             <h1 className="font-extrabold text-gray-900 leading-tight">Judo</h1>
@@ -238,8 +296,8 @@ export default function App() {
         {activeTab === 'planning' && (
           <div className="p-4 flex flex-col gap-6">
             <div className="bg-blue-50 border border-blue-100 rounded-lg p-4 text-sm text-blue-800 flex gap-3 shadow-sm">
-              <span className="text-xl">ℹ️</span>
-              <p>Indiquez votre présence. Vos collègues verront votre réponse instantanément.</p>
+              <ShieldAlert className="w-5 h-5 flex-shrink-0 text-blue-600" />
+              <p>Indiquez votre présence sur les créneaux pour informer l'équipe.</p>
             </div>
 
             {Object.keys(groupedSchedule).map(dateLabel => {
@@ -250,21 +308,22 @@ export default function App() {
 
               return (
                 <div key={dateLabel} className="flex flex-col gap-3 mb-2">
-                  <div className="border-b pb-3">
+                  <div className="border-b border-gray-200 pb-3">
                     <h2 className="text-lg font-bold text-gray-800 flex items-center gap-2 capitalize mb-2">
-                      <span>📅</span> {dateLabel}
+                      <Calendar className="w-5 h-5 text-blue-600" />
+                      {dateLabel}
                     </h2>
                     
                     <div className="flex flex-wrap gap-2 text-xs">
                       {presentToday.length > 0 && (
                         <div className="bg-green-50 text-green-700 px-2.5 py-1 rounded-md border border-green-200 flex items-center gap-1.5 shadow-sm">
-                          <span>✅</span>
+                          <CheckCircle className="w-3.5 h-3.5" />
                           <span className="font-medium">Présents :</span> {presentToday.join(', ')}
                         </div>
                       )}
                       {absentToday.length > 0 && (
                         <div className="bg-red-50 text-red-700 px-2.5 py-1 rounded-md border border-red-200 flex items-center gap-1.5 shadow-sm">
-                          <span>❌</span>
+                          <XCircle className="w-3.5 h-3.5" />
                           <span className="font-medium">Absents :</span> {absentToday.join(', ')}
                         </div>
                       )}
@@ -283,27 +342,37 @@ export default function App() {
 
                       return (
                         <div key={judoClass.sessionId} className="bg-white border border-gray-200 rounded-xl p-4 shadow-sm relative overflow-hidden">
-                          <div className="absolute left-0 top-0 bottom-0 w-1.5 bg-blue-500"></div>
+                          <div className={`absolute left-0 top-0 bottom-0 w-1.5 ${judoClass.isHoliday ? 'bg-orange-400' : 'bg-blue-500'}`}></div>
                           
                           <div className="flex justify-between items-start mb-2">
                             <div>
-                              <h3 className="font-bold text-gray-900 text-lg leading-tight">{judoClass.level}</h3>
+                              <h3 className="font-bold text-gray-900 text-lg leading-tight flex items-center gap-2">
+                                {judoClass.level}
+                                {judoClass.isHoliday && (
+                                  <span className="bg-orange-100 text-orange-700 text-[10px] uppercase font-black px-2 py-0.5 rounded-full border border-orange-200">
+                                    🌴 Vacances
+                                  </span>
+                                )}
+                              </h3>
                               <p className="text-gray-500 text-sm flex items-center gap-1 mt-1">
-                                <span>⏰</span> {judoClass.time}
+                                <Clock className="w-3.5 h-3.5" />
+                                <span className={judoClass.isHoliday ? 'font-bold text-orange-600' : ''}>
+                                  {judoClass.time}
+                                </span>
                               </p>
                             </div>
-                            <span className="bg-blue-50 text-blue-700 text-xs font-bold px-2.5 py-1 rounded-md border border-blue-100 flex items-center gap-1">
-                              <span>📍</span> Dojo
+                            <span className="bg-blue-50 text-blue-700 text-xs font-bold px-2.5 py-1 rounded-md border border-blue-100 flex items-center gap-1 mt-1">
+                              <MapPin className="w-3 h-3" />
+                              Dojo
                             </span>
                           </div>
 
                           {classAtts.length > 0 && (
                             <div className="my-3 bg-gray-50 rounded-lg p-3 border border-gray-100">
-                              <p className="text-xs font-semibold text-gray-500 mb-2 uppercase tracking-wider">Présences en direct</p>
                               <div className="flex flex-col gap-1.5">
                                 {presentTeachers.length > 0 && (
                                   <div className="flex items-start gap-2 text-sm">
-                                    <span>✅</span>
+                                    <CheckCircle className="w-4 h-4 text-green-500 mt-0.5 flex-shrink-0" />
                                     <span className="text-gray-700">
                                       <span className="font-medium">Présents :</span> {presentTeachers.map(a => a.teacherName).join(', ')}
                                     </span>
@@ -311,7 +380,7 @@ export default function App() {
                                 )}
                                 {absentTeachers.length > 0 && (
                                   <div className="flex items-start gap-2 text-sm">
-                                    <span>❌</span>
+                                    <XCircle className="w-4 h-4 text-red-400 mt-0.5 flex-shrink-0" />
                                     <span className="text-gray-500">
                                       <span className="font-medium">Absents :</span> {absentTeachers.map(a => a.teacherName).join(', ')}
                                     </span>
@@ -330,7 +399,8 @@ export default function App() {
                                   : 'bg-gray-100 text-gray-600 hover:bg-gray-200 border-2 border-transparent'
                               }`}
                             >
-                              <span>✅</span> Je serai là
+                              <CheckCircle className={`w-4 h-4 ${myStatus === 'present' ? 'text-green-600' : ''}`} />
+                              Présent
                             </button>
                             
                             <button
@@ -341,7 +411,8 @@ export default function App() {
                                   : 'bg-gray-100 text-gray-600 hover:bg-gray-200 border-2 border-transparent'
                               }`}
                             >
-                              <span>❌</span> Absent
+                              <XCircle className={`w-4 h-4 ${myStatus === 'absent' ? 'text-red-600' : ''}`} />
+                              Absent
                             </button>
                           </div>
                         </div>
@@ -367,7 +438,8 @@ export default function App() {
                 onClick={handleLogout}
                 className="w-full flex justify-center items-center gap-2 bg-red-50 hover:bg-red-100 text-red-600 font-semibold py-3 px-4 rounded-xl transition-colors border border-red-100"
               >
-                <span>🚪</span> Se déconnecter
+                <LogOut className="w-5 h-5" />
+                Se déconnecter
               </button>
             </div>
           </div>
@@ -380,14 +452,14 @@ export default function App() {
             onClick={() => setActiveTab('planning')}
             className={`flex-1 py-4 flex flex-col items-center gap-1 transition-colors ${activeTab === 'planning' ? 'text-blue-600' : 'text-gray-400 hover:text-gray-600'}`}
           >
-            <span className="text-xl">📅</span>
+            <Calendar className="w-6 h-6" />
             <span className="text-[10px] font-bold uppercase tracking-wider">Planning</span>
           </button>
           <button 
             onClick={() => setActiveTab('profile')}
             className={`flex-1 py-4 flex flex-col items-center gap-1 transition-colors ${activeTab === 'profile' ? 'text-blue-600' : 'text-gray-400 hover:text-gray-600'}`}
           >
-            <span className="text-xl">👤</span>
+            <User className="w-6 h-6" />
             <span className="text-[10px] font-bold uppercase tracking-wider">Profil</span>
           </button>
         </div>
